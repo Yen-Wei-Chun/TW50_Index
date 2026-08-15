@@ -13,9 +13,11 @@ The universe is a self-defined "Top 30 Taiwan market-cap" basket (constructed fr
 
 ## Key Findings
 
+> Figures below are from a single run (2026-08-14). Universe selection and price data are pulled live via API, so re-running this notebook will produce numerically different (though methodologically consistent) results — see [How to Run](#how-to-run).
+
 - **Full Replication** tracks the benchmark almost exactly by construction (annualized tracking error effectively **0 bps**), confirmed via an independently-built, share-based buy-and-hold portfolio — a sanity check on the return-calculation pipeline itself, not just a restatement of the benchmark construction.
-- **Sampled Replication** (15 of 30 names, selected by correlation to the benchmark) shows an annualized tracking error of **357.89 bps in-sample** and **342.12 bps out-of-sample**. A Newey-West (HAC-robust) significance test on the mean daily return differential finds **neither window is statistically distinguishable from zero** (p = 0.28 in-sample, p = 0.39 out-of-sample, n ≈ 120 each). This is a deliberately cautious conclusion — see [Methodology](#methodology--out-of-sample-validation) for why it matters.
-- **Reconstitution** (a single quarterly review, using a separate market-cap-ranked sample to isolate turnover from selection-methodology effects) produces a one-way turnover of **25.65%** and a return drag of **10.773 bps**, or roughly **43 bps/year** extrapolated across four quarterly reviews.
+- **Sampled Replication** (15 of 30 names, selected by correlation to the benchmark) shows an annualized tracking error of **339.72 bps in-sample** and **331.08 bps out-of-sample**. A Newey-West (HAC-robust) significance test on the mean daily return differential finds **neither window is statistically distinguishable from zero** (p = 0.19 in-sample, p = 0.29 out-of-sample, n ≈ 120 each). This is a deliberately cautious conclusion — see [Methodology — Out-of-Sample Validation](#methodology--out-of-sample-validation) for why it matters.
+- **Reconstitution** (a single quarterly review, using a separate market-cap-ranked sample to isolate turnover from selection-methodology effects) produces a one-way turnover of **24.24%** and a return drag of **10.181 bps**, or roughly **41 bps/year** extrapolated across four quarterly reviews.
 - Taken together, the order-of-magnitude gap between tracking error (hundreds of bps) and turnover cost (tens of bps) is directionally consistent with what's typically observed in practice: **selection risk tends to dominate rebalancing cost** for a concentrated sample, though the two are measured on differently-selected portfolios and shouldn't be read as a precise decomposition for a single fund.
 
 ## Methodology — Out-of-Sample Validation
@@ -31,10 +33,24 @@ This was corrected by:
 
 The result: neither window shows a statistically significant directional bias. This is a more conservative finding than simply comparing the sign or magnitude of the mean differential between windows would suggest — a mean this close to zero can differ in sign between two non-overlapping windows purely by chance, so significance testing (not just the raw numbers) is what determines whether the original bias has actually been resolved or merely become undetectable at this sample size.
 
+## Methodology — Shares-Outstanding Data Quality
+
+Universe selection depends on `shares_outstanding` from TWSE's `t187ap03_L` API, which does not publish an explicit as-of date and can lag real corporate actions. Cross-checking the computed Top 30 against TWSE's official market-cap ranking surfaced two distinct failure modes:
+
+- **Minor, ongoing lag** (4 tickers: 3037, 2408, 2382, 2327) — the API's share count trails recent capital activity by roughly 1–11%. Small enough that none of these tickers' Top-30 membership is affected, but large enough to bias their weight in the cap-weighted benchmark. Left uncorrected and documented as a known limitation.
+- **A severe, single case (6949)** — the API's share count had already updated to reflect a pending 20-for-1 par-value split (NT$10 → NT$0.5) whose effective date hadn't yet been reflected in the traded price. `post-split shares × pre-split price` inflated computed market cap by ~20x, which would have wrongly pulled 6949 into the Top 30. Confirmed against MOPS and corrected via a manual override.
+
+To catch cases like the second one systematically rather than by manual spot-checking alone, the notebook includes:
+
+1. **A scoped consistency check** — cross-validates `shares_outstanding` against `paid-in capital (net of preferred stock) / par value` from the same API response, restricted to a rough Top-60 candidate pool (to avoid noise from small caps, F-shares, and TDRs where this formula doesn't apply).
+2. **A manually-verified, source-documented override table** — corrections are only applied after confirming against MOPS directly; the check flags candidates, it does not auto-correct them. One flagged ticker (2887) was investigated and confirmed to be a false positive of the check's formula (a recent merger-related capital structure it doesn't model well), not an actual data issue — documented rather than overridden.
+
+This mechanism is a point-in-time patch, not a permanent fix: overrides need to be revisited once the underlying corporate action (e.g., 6949's split) is fully reflected in price.
+
 ## Known Limitations
 
 **Data layer**
-- Shares-outstanding data may lag the most recent equity issuance/buyback activity relative to official filings.
+- Shares-outstanding data may lag the most recent equity issuance/buyback activity relative to official filings — see [Methodology — Shares-Outstanding Data Quality](#methodology--shares-outstanding-data-quality) for the detection/override mechanism this project uses to catch the more severe cases.
 - No free-float adjustment — weights use total market cap rather than investable free-float market cap, which diverges from official index methodologies (e.g., FTSE).
 - Adjusted Close prices are retroactively adjusted, not real historical quotes — this doesn't distort relative return/turnover calculations but would matter if compared against external market-cap data.
 
@@ -56,7 +72,7 @@ The result: neither window shows a statistically significant directional bias. T
 ## Tech Stack
 
 - **Python**: pandas, numpy
-- **Data**: yfinance (price history), Taiwan Stock Exchange (TWSE) MOPS public data (shares outstanding)
+- **Data**: yfinance (price history), Taiwan Stock Exchange (TWSE) OpenAPI (`STOCK_DAY_ALL`, `t187ap03_L` for shares outstanding); MOPS used for manual verification of flagged tickers only, not as a programmatic data source
 - **Statistics**: scipy (naive t-test), statsmodels (Newey-West/HAC-robust regression)
 - **Visualization**: matplotlib
 
